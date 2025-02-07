@@ -1,18 +1,15 @@
-name: Deploy to GitHub Pages
-
+name: Deploy On GhPage
 on:
   push:
     branches:
       - master
-
 jobs:
-  build-and-deploy:
-    runs-on: ubuntu-latest
-    
+  deploy-ghpage:
+    runs-on: macos-latest
+    if: github.ref == 'refs/heads/master'
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
+      - uses: actions/checkout@v4
+      
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
@@ -24,19 +21,22 @@ jobs:
 
       - name: Build project
         run: npm run build
-        env:
-          VITE_BASE_URL: ${{ secrets.VITE_BASE_URL }}
 
       - name: Setup Git Config
         run: |
-          git config --global user.name 'github-actions[bot]'
-          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+          git config --global user.name 'github-actions'
+          git config --global user.email 'github-actions@github.com'
 
       - name: Deploy to GitHub Pages
+        if: success()
         run: |
           git remote set-url origin https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git
-          cd dist
+          mkdir -p out
+          cp -r dist/* out/
+          cd out
           git init
-          git add -A
+          git remote add origin https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git
+          git checkout -b ghpage
+          git add .
           git commit -m "Deploy to GitHub Pages"
-          git push -f origin HEAD:ghpage
+          git push -f origin ghpage
