@@ -5,6 +5,7 @@ const PokerCalculator = () => {
     const [combinations, setCombinations] = useState([]);
     const [mode, setMode] = useState(3);
     const [cardCounts, setCardCounts] = useState({});
+    const [enableThreeSixSwap, setEnableThreeSixSwap] = useState(true);
 
     const values = ['A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K', 'Joker'];
     const deck = values.map(value => ({
@@ -24,10 +25,10 @@ const PokerCalculator = () => {
 
     // 計算單張牌的所有可能值（考慮3和6的互換）
     const getCardPossibleValues = useCallback((card) => {
-        if (card.value === '3') return [3, 6];
-        if (card.value === '6') return [6, 3];
+        if (enableThreeSixSwap && card.value === '3') return [3, 6];
+        if (enableThreeSixSwap && card.value === '6') return [6, 3];
         return [card.numValue];
-    }, []);
+    }, [enableThreeSixSwap]);
 
     // 生成所有可能的數值組合
     const generateValueCombinations = useCallback((cards) => {
@@ -200,7 +201,18 @@ const PokerCalculator = () => {
     return (
         <div className="max-w-4xl mx-auto p-4 bg-white rounded-lg shadow">
             <h2 className="text-xl font-bold mb-4">撲克牌計算器 (可重複選擇)</h2>
-            <p className="text-sm text-gray-600 mb-2">特殊規則：3可以當作6，6可以當作3</p>
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-4">
+                <p className="text-sm text-gray-600">特殊規則：3可以當作6，6可以當作3</p>
+                <label className="inline-flex items-center gap-2 text-sm text-gray-700">
+                    <input
+                        type="checkbox"
+                        checked={enableThreeSixSwap}
+                        onChange={(e) => setEnableThreeSixSwap(e.target.checked)}
+                        className="rounded border-gray-300"
+                    />
+                    啟用 3/6 互換
+                </label>
+            </div>
             <div className="space-x-2 mb-4">
                 <button
                     className={`px-4 py-2 rounded ${mode === 3 ? 'bg-blue-500 text-white' : 'bg-gray-200'}`}
