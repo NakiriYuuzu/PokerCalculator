@@ -227,6 +227,9 @@ const toPositiveInt = (value) => {
     if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
         return Math.round(value)
     }
+    if (typeof value === 'bigint' && value > 0n) {
+        return Number(value)
+    }
     if (typeof value === 'string' && /^\d+$/.test(value)) {
         const parsed = Number(value)
         if (parsed > 0) return parsed
@@ -235,15 +238,45 @@ const toPositiveInt = (value) => {
 }
 
 const resolveModelInputShape = (session, inputName, fallbackSize) => {
-    const dims = session?.inputMetadata?.[inputName]?.dimensions || []
+    const meta = session?.inputMetadata?.[inputName] || {}
+    const dims = meta.dimensions || meta.dims || []
 
-    // 預設 NCHW: [N,3,H,W]
-    const maybeHeight = toPositiveInt(dims[2])
-    const maybeWidth = toPositiveInt(dims[3])
+    // 常見 NCHW: [N, C, H, W]
+    let maybeHeight = toPositiveInt(dims[2])
+    let maybeWidth = toPositiveInt(dims[3])
+
+    // 若模型是 NHWC: [N, H, W, C]
+    const maybeChannel = toPositiveInt(dims[3])
+    if ((!maybeHeight || !maybeWidth) && maybeChannel === 3) {
+        maybeHeight = toPositiveInt(dims[1])
+        maybeWidth = toPositiveInt(dims[2])
+    }
 
     return {
         inputWidth: maybeWidth || fallbackSize,
         inputHeight: maybeHeight || fallbackSize
+    }
+}
+
+const parseExpectedInputShapeFromOrtError = (error) => {
+    const message = String(error?.message || error || '')
+    const mH = message.match(/index:\s*2\s*Got:\s*\d+\s*Expected:\s*(\d+)/i)
+    const mW = message.match(/index:\s*3\s*Got:\s*\d+\s*Expected:\s*(\d+)/i)
+
+    const expectedHeight = mH ? Number(mH[1]) : NaN
+    const expectedWidth = mW ? Number(mW[1]) : NaN
+
+    if (!Number.isFinite(expectedHeight) || !Number.isFinite(expectedWidth)) {
+        return null
+    }
+
+    if (expectedHeight <= 0 || expectedWidth <= 0) {
+        return null
+    }
+
+    return {
+        inputHeight: Math.round(expectedHeight),
+        inputWidth: Math.round(expectedWidth)
     }
 }
 
@@ -261,6 +294,7 @@ export const createOnnxYoloDetector = ({
     }
 
     let sessionPromise = null
+    let forcedInputShape = null
 
     const ensureSession = async () => {
         if (sessionPromise) return sessionPromise
@@ -297,25 +331,48 @@ export const createOnnxYoloDetector = ({
 
             const inputName = session.inputNames[0]
             const outputName = session.outputNames[0]
-            const { inputWidth, inputHeight } = resolveModelInputShape(session, inputName, inputSize)
 
-            const { tensor, meta } = await toFloatTensorInput(sourceCanvas, inputWidth, inputHeight, ort)
-            const outputs = await session.run({ [inputName]: tensor })
-            const outputTensor = outputs[outputName]
+            const runWithShape = async ({ inputWidth, inputHeight }) => {
+                const { tensor, meta } = await toFloatTensorInput(sourceCanvas, inputWidth, inputHeight, ort)
+                const outputs = await session.run({ [inputName]: tensor })
+                const outputTensor = outputs[outputName]
 
-            const detections = parseOutputTensor(outputTensor, meta, {
-                modelType,
-                confidenceThreshold,
-                iouThreshold,
-                maxDetections
-            })
+                const detections = parseOutputTensor(outputTensor, meta, {
+                    modelType,
+                    confidenceThreshold,
+                    iouThreshold,
+                    maxDetections
+                })
 
-            return detections.map((det, index) => ({
-                id: `onnx-${Date.now()}-${index + 1}`,
-                bbox: det.bbox,
-                confidence: det.confidence,
-                classId: det.classId
-            }))
+                return detections.map((det, index) => ({
+                    id: `onnx-${Date.now()}-${index + 1}`,
+                    bbox: det.bbox,
+                    confidence: det.confidence,
+                    classId: det.classId
+                }))
+            }
+
+            const initialShape = forcedInputShape || resolveModelInputShape(session, inputName, inputSize)
+
+            try {
+                return await runWithShape(initialShape)
+            } catch (error) {
+                const expectedShape = parseExpectedInputShapeFromOrtError(error)
+
+                if (
+                    expectedShape &&
+                    (
+                        !forcedInputShape ||
+                        forcedInputShape.inputWidth !== expectedShape.inputWidth ||
+                        forcedInputShape.inputHeight !== expectedShape.inputHeight
+                    )
+                ) {
+                    forcedInputShape = expectedShape
+                    return runWithShape(expectedShape)
+                }
+
+                throw error
+            }
         }
     }
 }
