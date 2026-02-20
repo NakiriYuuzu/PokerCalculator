@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { createDeck, evaluateSelection } from '../engine/niuniuEngine'
 import { clearPreferences, defaultPreferences, loadPreferences, savePreferences } from '../utils/preferences'
+import CardBatchExtractor from './CardBatchExtractor'
 
 const PokerCalculator = () => {
     const initialPreferences = useRef(loadPreferences()).current
@@ -69,6 +70,50 @@ const PokerCalculator = () => {
         }))
         return true
     }, [mode])
+
+    const handleBatchImport = useCallback((cardValues) => {
+        const available = Math.max(0, mode - selectedCards.length)
+        const cardsToAdd = []
+        const countDelta = {}
+
+        let added = 0
+        let skipped = 0
+
+        cardValues.forEach((cardValue) => {
+            const card = deck.find(item => item.value === cardValue)
+            if (!card) {
+                skipped += 1
+                return
+            }
+
+            if (cardsToAdd.length >= available) {
+                skipped += 1
+                return
+            }
+
+            cardsToAdd.push(card)
+            countDelta[card.value] = (countDelta[card.value] || 0) + 1
+            added += 1
+        })
+
+        if (cardsToAdd.length > 0) {
+            setSelectedCards(prev => {
+                const next = [...prev, ...cardsToAdd]
+                selectedCountRef.current = next.length
+                return next
+            })
+
+            setCardCounts(prev => {
+                const merged = { ...prev }
+                Object.entries(countDelta).forEach(([value, count]) => {
+                    merged[value] = (merged[value] || 0) + count
+                })
+                return merged
+            })
+        }
+
+        return { added, skipped }
+    }, [deck, mode, selectedCards.length])
 
     useEffect(() => {
         if (selectedCards.length !== mode) {
@@ -209,6 +254,12 @@ const PokerCalculator = () => {
                     重置
                 </button>
             </div>
+
+            <CardBatchExtractor
+                cardOptions={deck.map(card => card.value)}
+                onImportCards={handleBatchImport}
+                remainingSlots={Math.max(0, mode - selectedCards.length)}
+            />
 
             <p>已選擇 {selectedCards.length}/{mode} 張牌</p>
 
