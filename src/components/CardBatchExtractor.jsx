@@ -84,6 +84,7 @@ const CardBatchExtractor = ({ cardOptions, onImportCards, remainingSlots }) => {
     const realtimeLastTickRef = useRef(0)
     const realtimeRafRef = useRef(null)
     const realtimeFpsRef = useRef(8)
+    const realtimeAutoImportAskedRef = useRef(false)
 
     const detectorCacheRef = useRef({
         key: null,
@@ -125,6 +126,7 @@ const CardBatchExtractor = ({ cardOptions, onImportCards, remainingSlots }) => {
         setExtractMessage('')
         setRealtimeDetections(0)
         setRealtimeLatencyMs(null)
+        realtimeAutoImportAskedRef.current = false
     }, [])
 
     const stopRealtime = useCallback((silent = false) => {
@@ -146,6 +148,7 @@ const CardBatchExtractor = ({ cardOptions, onImportCards, remainingSlots }) => {
         }
 
         realtimeBusyRef.current = false
+        realtimeAutoImportAskedRef.current = false
         setIsRealtimeRunning(false)
 
         if (!silent) {
@@ -466,12 +469,12 @@ const CardBatchExtractor = ({ cardOptions, onImportCards, remainingSlots }) => {
         ]))
     }
 
-    const confirmAndImportAutoCards = (autoCards) => {
+    const confirmAndImportAutoCards = (autoCards, sourceLabel = '辨識結果') => {
         if (!autoCards || autoCards.length === 0) return null
         if (remainingSlots <= 0) return null
 
         if (typeof window !== 'undefined') {
-            const shouldImport = window.confirm(`已自動辨識 ${autoCards.length} 張牌，是否直接匯入計算區？`)
+            const shouldImport = window.confirm(`已從${sourceLabel}自動辨識 ${autoCards.length} 張牌，是否直接匯入計算區？`)
             if (!shouldImport) return null
         }
 
@@ -500,7 +503,7 @@ const CardBatchExtractor = ({ cardOptions, onImportCards, remainingSlots }) => {
             if (results.length === 0) {
                 setExtractMessage('YOLO 沒有偵測到牌，請提高畫面清晰度或改用手動框選')
             } else {
-                const importResult = confirmAndImportAutoCards(applied.autoCards)
+                const importResult = confirmAndImportAutoCards(applied.autoCards, '圖片')
                 if (importResult) {
                     setExtractMessage(`YOLO 偵測 ${applied.total} 張，已自動帶入 ${applied.autoFilled} 張，並直接匯入 ${importResult.added} 張（略過 ${importResult.skipped} 張）`)
                 } else {
@@ -552,6 +555,7 @@ const CardBatchExtractor = ({ cardOptions, onImportCards, remainingSlots }) => {
             realtimeActiveRef.current = true
             realtimeBusyRef.current = false
             realtimeLastTickRef.current = 0
+            realtimeAutoImportAskedRef.current = false
             setIsRealtimeRunning(true)
             setExtractMessage('即時偵測啟動中（低延遲模式）')
 
@@ -576,8 +580,18 @@ const CardBatchExtractor = ({ cardOptions, onImportCards, remainingSlots }) => {
                     const latency = performance.now() - startedAt
 
                     const applied = applyDetections(results, 'rt')
+
+                    let importSummary = ''
+                    if (!realtimeAutoImportAskedRef.current && applied.autoCards.length > 0) {
+                        realtimeAutoImportAskedRef.current = true
+                        const importResult = confirmAndImportAutoCards(applied.autoCards, '即時偵測')
+                        if (importResult) {
+                            importSummary = `，已匯入 ${importResult.added} 張（略過 ${importResult.skipped} 張）`
+                        }
+                    }
+
                     setRealtimeLatencyMs(Math.round(latency))
-                    setExtractMessage(`即時偵測中：${applied.total} 張，已自動帶入 ${applied.autoFilled} 張（${Math.round(latency)} ms）`)
+                    setExtractMessage(`即時偵測中：${applied.total} 張，已自動帶入 ${applied.autoFilled} 張${importSummary}（${Math.round(latency)} ms）`)
                 } catch (error) {
                     setExtractMessage(`即時偵測失敗：${error.message}`)
                 } finally {
