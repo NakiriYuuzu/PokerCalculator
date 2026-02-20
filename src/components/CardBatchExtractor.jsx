@@ -8,6 +8,7 @@ import { YoloCardPipeline } from '../extractors/yolo/yoloPipeline'
 
 const MIN_BOX_SIZE = 16
 const DEFAULT_MODEL_URL = '/models/card-detector.onnx'
+const IOU_MATCH_THRESHOLD = 0.35
 
 const getBoxFromPoints = (start, end) => {
     const x = Math.min(start.x, end.x)
@@ -55,7 +56,7 @@ const attachPreviousCardsByIoU = (nextItems, prevItems) => {
             }
         }
 
-        if (bestIdx >= 0 && bestIoU > 0.35 && prevItems[bestIdx].card) {
+        if (bestIdx >= 0 && bestIoU > IOU_MATCH_THRESHOLD && prevItems[bestIdx].card) {
             usedPrev.add(bestIdx)
             return {
                 ...next,
@@ -81,6 +82,7 @@ const CardBatchExtractor = ({ cardOptions, onImportCards, remainingSlots }) => {
     const realtimeBusyRef = useRef(false)
     const realtimeLastTickRef = useRef(0)
     const realtimeRafRef = useRef(null)
+    const realtimeFpsRef = useRef(8)
 
     const detectorCacheRef = useRef({
         key: null,
@@ -109,6 +111,10 @@ const CardBatchExtractor = ({ cardOptions, onImportCards, remainingSlots }) => {
 
     const canImport = detectedItems.some(item => !!item.card)
     const cardValueSet = useMemo(() => new Set(cardOptions), [cardOptions])
+
+    useEffect(() => {
+        realtimeFpsRef.current = Math.max(1, realtimeFps)
+    }, [realtimeFps])
 
     const resetDetectionData = useCallback(() => {
         setManualBoxes([])
@@ -450,7 +456,7 @@ const CardBatchExtractor = ({ cardOptions, onImportCards, remainingSlots }) => {
                 if (!realtimeActiveRef.current) return
 
                 realtimeRafRef.current = requestAnimationFrame(loop)
-                const intervalMs = 1000 / Math.max(1, realtimeFps)
+                const intervalMs = 1000 / Math.max(1, realtimeFpsRef.current)
                 if (ts - realtimeLastTickRef.current < intervalMs) return
                 if (realtimeBusyRef.current) return
 
@@ -621,7 +627,7 @@ const CardBatchExtractor = ({ cardOptions, onImportCards, remainingSlots }) => {
                 <span className="text-xs text-gray-600">{yoloModelLabel}</span>
             </div>
 
-            <div className="flex flex-wrap items-center gap-3 mb-3 text-sm">
+            <div className="flex flex-wrap items-center gap-3 mb-1 text-sm">
                 <label className="inline-flex items-center gap-2">
                     <span>信心門檻</span>
                     <input
@@ -630,6 +636,7 @@ const CardBatchExtractor = ({ cardOptions, onImportCards, remainingSlots }) => {
                         max="0.95"
                         step="0.05"
                         value={yoloConfidence}
+                        disabled={isRealtimeRunning}
                         onChange={(e) => {
                             setYoloConfidence(Number(e.target.value))
                             detectorCacheRef.current = { key: null, pipeline: null }
@@ -642,6 +649,7 @@ const CardBatchExtractor = ({ cardOptions, onImportCards, remainingSlots }) => {
                     <span>輸入尺寸</span>
                     <select
                         value={yoloInputSize}
+                        disabled={isRealtimeRunning}
                         onChange={(e) => {
                             setYoloInputSize(Number(e.target.value))
                             detectorCacheRef.current = { key: null, pipeline: null }
@@ -658,6 +666,7 @@ const CardBatchExtractor = ({ cardOptions, onImportCards, remainingSlots }) => {
                     <input
                         type="checkbox"
                         checked={preferWebGPU}
+                        disabled={isRealtimeRunning}
                         onChange={(e) => {
                             setPreferWebGPU(e.target.checked)
                             detectorCacheRef.current = { key: null, pipeline: null }
@@ -666,6 +675,10 @@ const CardBatchExtractor = ({ cardOptions, onImportCards, remainingSlots }) => {
                     優先 WebGPU（不支援時回落 WASM）
                 </label>
             </div>
+
+            {isRealtimeRunning && (
+                <p className="text-xs text-amber-700 mb-3">即時偵測運行中，若要套用模型/門檻/尺寸設定請先停止再重啟。</p>
+            )}
 
             <div className="border rounded p-3 mb-3 bg-white/70">
                 <div className="flex flex-wrap items-center gap-3 mb-2 text-sm">
