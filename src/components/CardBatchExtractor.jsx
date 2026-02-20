@@ -7,7 +7,7 @@ import {
 import { YoloCardPipeline } from '../extractors/yolo/yoloPipeline'
 
 const MIN_BOX_SIZE = 16
-const DEFAULT_MODEL_URL = '/models/card-detector.onnx'
+const DEFAULT_MODEL_URL = `${import.meta.env.BASE_URL}models/card-detector.onnx`
 const IOU_MATCH_THRESHOLD = 0.35
 
 const getBoxFromPoints = (start, end) => {
