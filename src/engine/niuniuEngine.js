@@ -211,6 +211,8 @@ export const evaluateSelection = (cards, mode, customRules = {}) => {
 
                     if (validResults.length > 0) {
                         const remainingResults = calculateAllPossibleSums(remainingCards, rules)
+                        if (remainingResults.length === 0) continue
+
                         all.push({
                             cards: combo,
                             results: validResults,

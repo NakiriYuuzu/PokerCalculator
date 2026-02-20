@@ -14,7 +14,13 @@ export const defaultPreferences = {
     }
 }
 
-const canUseStorage = () => typeof window !== 'undefined' && !!window.localStorage
+const canUseStorage = () => {
+    try {
+        return typeof window !== 'undefined' && !!window.localStorage
+    } catch {
+        return false
+    }
+}
 
 export const loadPreferences = () => {
     if (!canUseStorage()) return defaultPreferences

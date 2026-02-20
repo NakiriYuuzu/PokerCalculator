@@ -33,18 +33,40 @@ export class YoloCardPipeline {
         return this.classifier.classify(cardImage)
     }
 
-    async extractAll(imageBitmapOrCanvas, cropper) {
-        const detections = await this.detectCards(imageBitmapOrCanvas)
+    async extractAll(imageBitmapOrCanvas, cropper = defaultCropper) {
+        const activeCropper = cropper ?? defaultCropper
+        if (!activeCropper?.crop) {
+            throw new Error('Cropper 尚未初始化')
+        }
+
+        let detections = []
+        try {
+            detections = await this.detectCards(imageBitmapOrCanvas)
+        } catch (error) {
+            throw new Error(`牌框偵測失敗：${error.message}`)
+        }
+
         const results = []
 
         for (const det of detections) {
-            const cardImage = cropper.crop(imageBitmapOrCanvas, det.bbox)
-            const classified = await this.classifyCard(cardImage)
-            results.push({
-                bbox: det.bbox,
-                detectionConfidence: det.confidence,
-                ...classified
-            })
+            const cardImage = activeCropper.crop(imageBitmapOrCanvas, det.bbox)
+            try {
+                const classified = await this.classifyCard(cardImage)
+                results.push({
+                    bbox: det.bbox,
+                    detectionConfidence: det.confidence,
+                    ...classified
+                })
+            } catch {
+                results.push({
+                    bbox: det.bbox,
+                    detectionConfidence: det.confidence,
+                    card: null,
+                    rank: null,
+                    suit: null,
+                    confidence: 0
+                })
+            }
         }
 
         return {
