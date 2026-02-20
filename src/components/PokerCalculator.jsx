@@ -1,32 +1,57 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
+import { createDeck, evaluateSelection } from '../engine/niuniuEngine'
+import { clearPreferences, defaultPreferences, loadPreferences, savePreferences } from '../utils/preferences'
 
 const PokerCalculator = () => {
+    const initialPreferences = useRef(loadPreferences()).current
+
     const [selectedCards, setSelectedCards] = useState([])
     const [combinations, setCombinations] = useState([])
-    const [mode, setMode] = useState(3)
+    const [bestCombination, setBestCombination] = useState(null)
+    const [mode, setMode] = useState(initialPreferences.mode || 3)
     const [cardCounts, setCardCounts] = useState({})
-    const [enableThreeSixSwap, setEnableThreeSixSwap] = useState(true)
+
+    const [enableThreeSixSwap, setEnableThreeSixSwap] = useState(
+        initialPreferences.rules?.enableThreeSixSwap ?? true
+    )
+    const [jokerWildcard, setJokerWildcard] = useState(
+        initialPreferences.rules?.jokerWildcard ?? true
+    )
+    const [rememberPreferences, setRememberPreferences] = useState(
+        initialPreferences.rememberPreferences ?? true
+    )
 
     const selectedCountRef = useRef(0)
 
-    const values = ['A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K', 'Joker']
-    const deck = values.map(value => ({
-        value,
-        display: value,
-        numValue: value === 'A' ? 1 :
-            ['J', 'Q', 'K'].includes(value) ? 10 :
-                value === 'Joker' ? 'Joker' :
-                    parseInt(value)
-    }))
+    const deck = createDeck()
 
     useEffect(() => {
         selectedCountRef.current = selectedCards.length
     }, [selectedCards])
 
+    useEffect(() => {
+        if (!rememberPreferences) {
+            clearPreferences()
+            return
+        }
+
+        savePreferences({
+            ...defaultPreferences,
+            rememberPreferences,
+            mode,
+            rules: {
+                ...defaultPreferences.rules,
+                enableThreeSixSwap,
+                jokerWildcard
+            }
+        })
+    }, [rememberPreferences, mode, enableThreeSixSwap, jokerWildcard])
+
     const resetSelection = () => {
         setSelectedCards([])
         setCardCounts({})
         setCombinations([])
+        setBestCombination(null)
     }
 
     const handleCardSelect = useCallback((card) => {
@@ -45,136 +70,21 @@ const PokerCalculator = () => {
         return true
     }, [mode])
 
-    const getCardPossibleValues = useCallback((card) => {
-        if (enableThreeSixSwap && card.value === '3') return [3, 6]
-        if (enableThreeSixSwap && card.value === '6') return [6, 3]
-        return [card.numValue]
-    }, [enableThreeSixSwap])
-
-    const generateValueCombinations = useCallback((cards) => {
-        const possibilities = cards.map(getCardPossibleValues)
-        const results = []
-
-        const generate = (index, currentSum, currentValues, conversions) => {
-            if (index === cards.length) {
-                results.push({ sum: currentSum, values: [...currentValues], conversions: [...conversions] })
-                return
-            }
-
-            possibilities[index].forEach(value => {
-                const originalValue = cards[index].numValue
-                const conversion = (originalValue === 3 && value === 6) ||
-                    (originalValue === 6 && value === 3)
-                    ? { index, from: originalValue, to: value }
-                    : null
-
-                generate(
-                    index + 1,
-                    currentSum + value,
-                    [...currentValues, value],
-                    conversion ? [...conversions, conversion] : conversions
-                )
-            })
+    useEffect(() => {
+        if (selectedCards.length !== mode) {
+            setCombinations([])
+            setBestCombination(null)
+            return
         }
 
-        generate(0, 0, [], [])
-        return results
-    }, [getCardPossibleValues])
-
-    const calculateAllPossibleSums = useCallback((cards) => {
-        if (cards.length !== 3 && cards.length !== 2) return []
-
-        const jokers = cards.filter(card => card.value === 'Joker')
-        const nonJokers = cards.filter(card => card.value !== 'Joker')
-        const possibleValues = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
-
-        if (jokers.length === 0) {
-            const valueCombinations = generateValueCombinations(cards)
-            return valueCombinations.map(combo => ({
-                sum: combo.sum,
-                jokerValues: [],
-                isValid: cards.length === 3 ? combo.sum % 10 === 0 : true,
-                conversions: combo.conversions
-            })).filter(result => cards.length === 2 || result.isValid)
-        }
-
-        const combinations = []
-        const generateCombinations = (currentJokerIndex, currentSum, currentJokerValues, currentConversions) => {
-            if (currentJokerIndex === jokers.length) {
-                if (cards.length === 2 || currentSum % 10 === 0) {
-                    combinations.push({
-                        sum: currentSum,
-                        jokerValues: [...currentJokerValues],
-                        isValid: true,
-                        conversions: currentConversions
-                    })
-                }
-                return
-            }
-
-            for (const value of possibleValues) {
-                generateCombinations(
-                    currentJokerIndex + 1,
-                    currentSum + value,
-                    [...currentJokerValues, value],
-                    currentConversions
-                )
-            }
-        }
-
-        const nonJokerCombinations = generateValueCombinations(nonJokers)
-        nonJokerCombinations.forEach(nonJokerCombo => {
-            generateCombinations(0, nonJokerCombo.sum, [], nonJokerCombo.conversions)
+        const { all, best } = evaluateSelection(selectedCards, mode, {
+            enableThreeSixSwap,
+            jokerWildcard
         })
 
-        return combinations
-    }, [generateValueCombinations])
-
-    useEffect(() => {
-        if (selectedCards.length === mode) {
-            if (mode === 3) {
-                const possibleResults = calculateAllPossibleSums(selectedCards)
-                if (possibleResults.some(result => result.isValid)) {
-                    setCombinations([{
-                        cards: selectedCards,
-                        results: possibleResults.filter(result => result.isValid),
-                        remainingCards: null
-                    }])
-                } else {
-                    setCombinations([])
-                }
-            } else if (mode === 5) {
-                const allCombos = []
-                for (let i = 0; i < selectedCards.length - 2; i++) {
-                    for (let j = i + 1; j < selectedCards.length - 1; j++) {
-                        for (let k = j + 1; k < selectedCards.length; k++) {
-                            const combo = [selectedCards[i], selectedCards[j], selectedCards[k]]
-                            const remainingCards = selectedCards.filter((_, index) =>
-                                index !== i && index !== j && index !== k
-                            )
-                            const possibleResults = calculateAllPossibleSums(combo)
-                            const validResults = possibleResults.filter(result => result.isValid)
-
-                            if (validResults.length > 0) {
-                                const remainingResults = calculateAllPossibleSums(remainingCards)
-                                allCombos.push({
-                                    cards: combo,
-                                    results: validResults,
-                                    remainingCards: {
-                                        cards: remainingCards,
-                                        results: remainingResults
-                                    }
-                                })
-                            }
-                        }
-                    }
-                }
-                setCombinations(allCombos)
-            }
-        } else {
-            setCombinations([])
-        }
-    }, [selectedCards, mode, calculateAllPossibleSums])
+        setCombinations(all)
+        setBestCombination(best)
+    }, [selectedCards, mode, enableThreeSixSwap, jokerWildcard])
 
     const handleCardRemove = (index) => {
         const removedCard = selectedCards[index]
@@ -203,20 +113,74 @@ const PokerCalculator = () => {
         )
     }
 
+    const renderBest = () => {
+        if (!bestCombination) return null
+
+        const combo = bestCombination.combo
+        const mainResult = combo.results[bestCombination.resultIndex]
+        const remainingResult = combo.remainingCards
+            ? combo.remainingCards.results[bestCombination.remainingResultIndex]
+            : null
+
+        return (
+            <div className="border rounded-lg p-4 mb-4 bg-amber-50 border-amber-300">
+                <p className="font-semibold text-amber-800 mb-1">最優解（Beta）</p>
+                <p className="text-sm text-amber-700 mb-2">
+                    牛值：{bestCombination.niuRank === 10 ? '牛牛' : `牛${bestCombination.niuRank}`}
+                </p>
+
+                <p className="text-sm">
+                    前三張：{combo.cards.map(c => c.display).join(', ')}
+                    {mainResult && renderConversions(mainResult.conversions, combo.cards)}
+                </p>
+
+                {remainingResult && combo.remainingCards && (
+                    <p className="text-sm mt-1">
+                        後兩張：{combo.remainingCards.cards.map(c => c.display).join(', ')}
+                        {renderConversions(remainingResult.conversions, combo.remainingCards.cards)}
+                    </p>
+                )}
+            </div>
+        )
+    }
+
     return (
         <div className="max-w-4xl mx-auto p-4 bg-white rounded-lg shadow">
-            <h2 className="text-xl font-bold mb-4">撲克牌計算器 (可重複選擇)</h2>
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-4">
-                <p className="text-sm text-gray-600">特殊規則：3可以當作6，6可以當作3</p>
-                <label className="inline-flex items-center gap-2 text-sm text-gray-700">
-                    <input
-                        type="checkbox"
-                        checked={enableThreeSixSwap}
-                        onChange={(e) => setEnableThreeSixSwap(e.target.checked)}
-                        className="rounded border-gray-300"
-                    />
-                    啟用 3/6 互換
-                </label>
+            <h2 className="text-xl font-bold mb-4">撲克牌計算器 v2（開發中）</h2>
+            <div className="flex flex-col gap-2 mb-4">
+                <p className="text-sm text-gray-600">牛牛核心重構中：已支援最優解 + 全部結果</p>
+
+                <div className="flex flex-wrap items-center gap-4">
+                    <label className="inline-flex items-center gap-2 text-sm text-gray-700">
+                        <input
+                            type="checkbox"
+                            checked={enableThreeSixSwap}
+                            onChange={(e) => setEnableThreeSixSwap(e.target.checked)}
+                            className="rounded border-gray-300"
+                        />
+                        啟用 3/6 互換
+                    </label>
+
+                    <label className="inline-flex items-center gap-2 text-sm text-gray-700">
+                        <input
+                            type="checkbox"
+                            checked={jokerWildcard}
+                            onChange={(e) => setJokerWildcard(e.target.checked)}
+                            className="rounded border-gray-300"
+                        />
+                        Joker 可作任意點數
+                    </label>
+
+                    <label className="inline-flex items-center gap-2 text-sm text-gray-700">
+                        <input
+                            type="checkbox"
+                            checked={rememberPreferences}
+                            onChange={(e) => setRememberPreferences(e.target.checked)}
+                            className="rounded border-gray-300"
+                        />
+                        記住我的設定（localStorage）
+                    </label>
+                </div>
             </div>
 
             <div className="space-x-2 mb-4">
@@ -283,9 +247,11 @@ const PokerCalculator = () => {
                 ))}
             </div>
 
+            {renderBest()}
+
             {combinations.length > 0 ? (
                 <div className="space-y-4">
-                    <h3 className="text-lg font-semibold">可行組合：</h3>
+                    <h3 className="text-lg font-semibold">全部可行組合：</h3>
                     {combinations.map((combo, i) => (
                         <div key={i} className="border rounded-lg p-4 bg-white shadow-sm">
                             <div className="mb-2">
@@ -331,7 +297,7 @@ const PokerCalculator = () => {
             ) : (
                 selectedCards.length === mode && (
                     <div className="text-center py-4 text-gray-500">
-                        沒有找到可以組成10倍數的組合
+                        沒有找到可行組合
                     </div>
                 )
             )}
