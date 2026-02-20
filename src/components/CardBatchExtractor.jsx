@@ -267,9 +267,12 @@ const CardBatchExtractor = ({ cardOptions, onImportCards, remainingSlots }) => {
 
         return {
             total: normalized.length,
-            autoFilled: autoFilledCount
+            autoFilled: autoFilledCount,
+            autoCards: normalized
+                .map(item => item.card)
+                .filter(card => !!card && cardValueSet.has(card))
         }
-    }, [classNamesMap, mapClassLabelToCardValue])
+    }, [cardValueSet, classNamesMap, mapClassLabelToCardValue])
 
     const createPipeline = useCallback((mode = 'image') => {
         const maxDetections = mode === 'realtime' ? 12 : 40
@@ -463,6 +466,18 @@ const CardBatchExtractor = ({ cardOptions, onImportCards, remainingSlots }) => {
         ]))
     }
 
+    const confirmAndImportAutoCards = (autoCards) => {
+        if (!autoCards || autoCards.length === 0) return null
+        if (remainingSlots <= 0) return null
+
+        if (typeof window !== 'undefined') {
+            const shouldImport = window.confirm(`已自動辨識 ${autoCards.length} 張牌，是否直接匯入計算區？`)
+            if (!shouldImport) return null
+        }
+
+        return onImportCards(autoCards)
+    }
+
     const runYoloDetector = async () => {
         if (!imageRef.current || !canvasRef.current) {
             setExtractMessage('請先上傳圖片')
@@ -482,10 +497,16 @@ const CardBatchExtractor = ({ cardOptions, onImportCards, remainingSlots }) => {
             const { results } = await pipeline.extractAll(sourceCanvas)
             const applied = applyDetections(results, 'img', { confirmAutoFill: true })
 
-            setExtractMessage(results.length === 0
-                ? 'YOLO 沒有偵測到牌，請提高畫面清晰度或改用手動框選'
-                : `YOLO 偵測到 ${applied.total} 張，已自動帶入 ${applied.autoFilled} 張牌，請確認後再匯入`
-            )
+            if (results.length === 0) {
+                setExtractMessage('YOLO 沒有偵測到牌，請提高畫面清晰度或改用手動框選')
+            } else {
+                const importResult = confirmAndImportAutoCards(applied.autoCards)
+                if (importResult) {
+                    setExtractMessage(`YOLO 偵測 ${applied.total} 張，已自動帶入 ${applied.autoFilled} 張，並直接匯入 ${importResult.added} 張（略過 ${importResult.skipped} 張）`)
+                } else {
+                    setExtractMessage(`YOLO 偵測到 ${applied.total} 張，已自動帶入 ${applied.autoFilled} 張牌，請確認後再匯入`)
+                }
+            }
         } catch (error) {
             setExtractMessage(`YOLO 偵測失敗：${error.message}`)
         } finally {
