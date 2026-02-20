@@ -8,6 +8,7 @@ import { YoloCardPipeline } from '../extractors/yolo/yoloPipeline'
 
 const MIN_BOX_SIZE = 16
 const DEFAULT_MODEL_URL = `${import.meta.env.BASE_URL}models/card-detector.onnx`
+const DEFAULT_LABELS_URL = `${import.meta.env.BASE_URL}models/card-detector.labels.json`
 const IOU_MATCH_THRESHOLD = 0.35
 
 const getBoxFromPoints = (start, end) => {
@@ -100,6 +101,7 @@ const CardBatchExtractor = ({ cardOptions, onImportCards, remainingSlots }) => {
 
     const [yoloModelUrl, setYoloModelUrl] = useState(DEFAULT_MODEL_URL)
     const [yoloModelLabel, setYoloModelLabel] = useState('預設模型路徑')
+    const [classNamesMap, setClassNamesMap] = useState({})
     const [preferWebGPU, setPreferWebGPU] = useState(true)
     const [yoloConfidence, setYoloConfidence] = useState(0.35)
     const [yoloInputSize, setYoloInputSize] = useState(416)
@@ -160,6 +162,21 @@ const CardBatchExtractor = ({ cardOptions, onImportCards, remainingSlots }) => {
         }
     }, [stopRealtime])
 
+    useEffect(() => {
+        const loadDefaultLabels = async () => {
+            try {
+                const res = await fetch(DEFAULT_LABELS_URL)
+                if (!res.ok) throw new Error('labels not found')
+                const json = await res.json()
+                setClassNamesMap(json || {})
+            } catch {
+                setClassNamesMap({})
+            }
+        }
+
+        loadDefaultLabels()
+    }, [])
+
     const getCanvasPoint = (event) => {
         const canvas = canvasRef.current
         if (!canvas) return null
@@ -188,11 +205,58 @@ const CardBatchExtractor = ({ cardOptions, onImportCards, remainingSlots }) => {
         return sourceCanvas
     }
 
-    const applyDetections = useCallback((results, prefix) => {
-        const normalized = results.map((item, index) => ({
-            ...item,
-            detectionId: `${prefix}-${index + 1}`
-        }))
+    const mapClassLabelToCardValue = useCallback((label) => {
+        if (!label || typeof label !== 'string') return null
+
+        const normalized = label.trim().toUpperCase()
+        const compact = normalized.replace(/[^A-Z0-9]/g, '')
+
+        if (compact.includes('JOKER')) return 'Joker'
+        if (compact.includes('ACE')) return 'A'
+        if (compact.includes('KING')) return 'K'
+        if (compact.includes('QUEEN')) return 'Q'
+        if (compact.includes('JACK')) return 'J'
+
+        const suitPattern = /(10|[2-9]|A|J|Q|K)[CDHS]$/
+        const withSuit = compact.match(suitPattern)
+        if (withSuit) return withSuit[1]
+
+        const rankOnly = compact.match(/^(10|[2-9]|A|J|Q|K)$/)
+        if (rankOnly) return rankOnly[1]
+
+        const digit = compact.match(/10|[2-9]/)
+        if (digit) return digit[0]
+
+        return null
+    }, [])
+
+    const applyDetections = useCallback((results, prefix, options = {}) => {
+        const { confirmAutoFill = false } = options
+
+        let normalized = results.map((item, index) => {
+            const classLabel = item.className || classNamesMap[item.classId] || classNamesMap[String(item.classId)] || null
+            const autoCard = mapClassLabelToCardValue(classLabel)
+
+            return {
+                ...item,
+                className: classLabel,
+                card: autoCard,
+                detectionId: `${prefix}-${index + 1}`
+            }
+        })
+
+        let autoFilledCount = normalized.filter(item => !!item.card).length
+
+        if (confirmAutoFill && autoFilledCount > 0 && typeof window !== 'undefined') {
+            const keepAutoFill = window.confirm(`已自動帶入 ${autoFilledCount} 張牌，是否保留？`)
+            if (!keepAutoFill) {
+                normalized = normalized.map(item => ({
+                    ...item,
+                    card: null
+                }))
+                autoFilledCount = 0
+            }
+        }
 
         setDetectedItems(prev => attachPreviousCardsByIoU(normalized, prev))
         setManualBoxes(normalized.map(item => ({
@@ -200,7 +264,12 @@ const CardBatchExtractor = ({ cardOptions, onImportCards, remainingSlots }) => {
             ...item.bbox
         })))
         setRealtimeDetections(normalized.length)
-    }, [])
+
+        return {
+            total: normalized.length,
+            autoFilled: autoFilledCount
+        }
+    }, [classNamesMap, mapClassLabelToCardValue])
 
     const createPipeline = useCallback((mode = 'image') => {
         const maxDetections = mode === 'realtime' ? 12 : 40
@@ -227,7 +296,8 @@ const CardBatchExtractor = ({ cardOptions, onImportCards, remainingSlots }) => {
                 confidenceThreshold,
                 inputSize: yoloInputSize,
                 maxDetections,
-                preferWebGPU
+                preferWebGPU,
+                classNames: classNamesMap
             }),
             classifier: createMockClassifier(),
             minConfidence: confidenceThreshold
@@ -239,7 +309,7 @@ const CardBatchExtractor = ({ cardOptions, onImportCards, remainingSlots }) => {
         }
 
         return pipeline
-    }, [preferWebGPU, yoloConfidence, yoloInputSize, yoloModelUrl])
+    }, [classNamesMap, preferWebGPU, yoloConfidence, yoloInputSize, yoloModelUrl])
 
     const draw = () => {
         const canvas = canvasRef.current
@@ -323,17 +393,29 @@ const CardBatchExtractor = ({ cardOptions, onImportCards, remainingSlots }) => {
         modelObjectUrlRef.current = objectUrl
         setYoloModelUrl(objectUrl)
         setYoloModelLabel(`本地模型：${file.name}`)
+        setClassNamesMap({})
         detectorCacheRef.current = { key: null, pipeline: null }
-        setExtractMessage(`已載入 ONNX 模型：${file.name}`)
+        setExtractMessage(`已載入 ONNX 模型：${file.name}（若無 labels 將無法自動帶入牌面）`)
     }
 
-    const useDefaultModelPath = () => {
+    const useDefaultModelPath = async () => {
         if (modelObjectUrlRef.current) {
             URL.revokeObjectURL(modelObjectUrlRef.current)
             modelObjectUrlRef.current = null
         }
+
         setYoloModelUrl(DEFAULT_MODEL_URL)
         setYoloModelLabel('預設模型路徑')
+
+        try {
+            const res = await fetch(DEFAULT_LABELS_URL)
+            if (!res.ok) throw new Error('labels not found')
+            const json = await res.json()
+            setClassNamesMap(json || {})
+        } catch {
+            setClassNamesMap({})
+        }
+
         detectorCacheRef.current = { key: null, pipeline: null }
         setExtractMessage(`已切換回預設模型路徑：${DEFAULT_MODEL_URL}`)
     }
@@ -398,11 +480,11 @@ const CardBatchExtractor = ({ cardOptions, onImportCards, remainingSlots }) => {
         setIsExtracting(true)
         try {
             const { results } = await pipeline.extractAll(sourceCanvas)
-            applyDetections(results, 'img')
+            const applied = applyDetections(results, 'img', { confirmAutoFill: true })
 
             setExtractMessage(results.length === 0
                 ? 'YOLO 沒有偵測到牌，請提高畫面清晰度或改用手動框選'
-                : `YOLO 偵測到 ${results.length} 張牌，請逐張確認牌面後再匯入`
+                : `YOLO 偵測到 ${applied.total} 張，已自動帶入 ${applied.autoFilled} 張牌，請確認後再匯入`
             )
         } catch (error) {
             setExtractMessage(`YOLO 偵測失敗：${error.message}`)
@@ -472,9 +554,9 @@ const CardBatchExtractor = ({ cardOptions, onImportCards, remainingSlots }) => {
                     const { results } = await pipeline.extractAll(source)
                     const latency = performance.now() - startedAt
 
-                    applyDetections(results, 'rt')
+                    const applied = applyDetections(results, 'rt')
                     setRealtimeLatencyMs(Math.round(latency))
-                    setExtractMessage(`即時偵測中：${results.length} 張（${Math.round(latency)} ms）`)
+                    setExtractMessage(`即時偵測中：${applied.total} 張，已自動帶入 ${applied.autoFilled} 張（${Math.round(latency)} ms）`)
                 } catch (error) {
                     setExtractMessage(`即時偵測失敗：${error.message}`)
                 } finally {

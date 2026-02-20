@@ -287,7 +287,8 @@ export const createOnnxYoloDetector = ({
     confidenceThreshold = DEFAULT_CONFIDENCE_THRESHOLD,
     iouThreshold = DEFAULT_IOU_THRESHOLD,
     maxDetections = DEFAULT_MAX_DETECTIONS,
-    preferWebGPU = true
+    preferWebGPU = true,
+    classNames = null
 } = {}) => {
     if (!modelUrl) {
         throw new Error('未提供 ONNX 模型路徑')
@@ -322,6 +323,20 @@ export const createOnnxYoloDetector = ({
         return sessionPromise
     }
 
+    const getClassNameById = (classId) => {
+        if (!classNames) return null
+
+        if (Array.isArray(classNames)) {
+            return classNames[classId] ?? null
+        }
+
+        if (typeof classNames === 'object') {
+            return classNames[classId] ?? classNames[String(classId)] ?? null
+        }
+
+        return null
+    }
+
     return {
         async detect(sourceCanvas) {
             if (!sourceCanvas) return []
@@ -348,7 +363,8 @@ export const createOnnxYoloDetector = ({
                     id: `onnx-${Date.now()}-${index + 1}`,
                     bbox: det.bbox,
                     confidence: det.confidence,
-                    classId: det.classId
+                    classId: det.classId,
+                    className: getClassNameById(det.classId)
                 }))
             }
 
