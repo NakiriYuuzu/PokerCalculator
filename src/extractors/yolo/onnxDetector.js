@@ -40,27 +40,27 @@ const runNms = (detections, iouThreshold, maxDetections) => {
     return picked
 }
 
-const toFloatTensorInput = async (sourceCanvas, inputSize, ort) => {
+const toFloatTensorInput = async (sourceCanvas, inputWidth, inputHeight, ort) => {
     const srcW = sourceCanvas.width
     const srcH = sourceCanvas.height
-    const scale = Math.min(inputSize / srcW, inputSize / srcH)
+    const scale = Math.min(inputWidth / srcW, inputHeight / srcH)
 
     const scaledW = Math.round(srcW * scale)
     const scaledH = Math.round(srcH * scale)
-    const padX = Math.floor((inputSize - scaledW) / 2)
-    const padY = Math.floor((inputSize - scaledH) / 2)
+    const padX = Math.floor((inputWidth - scaledW) / 2)
+    const padY = Math.floor((inputHeight - scaledH) / 2)
 
     const canvas = document.createElement('canvas')
-    canvas.width = inputSize
-    canvas.height = inputSize
+    canvas.width = inputWidth
+    canvas.height = inputHeight
     const ctx = canvas.getContext('2d')
 
     ctx.fillStyle = '#000'
-    ctx.fillRect(0, 0, inputSize, inputSize)
+    ctx.fillRect(0, 0, inputWidth, inputHeight)
     ctx.drawImage(sourceCanvas, 0, 0, srcW, srcH, padX, padY, scaledW, scaledH)
 
-    const imageData = ctx.getImageData(0, 0, inputSize, inputSize).data
-    const pixels = inputSize * inputSize
+    const imageData = ctx.getImageData(0, 0, inputWidth, inputHeight).data
+    const pixels = inputWidth * inputHeight
     const input = new Float32Array(3 * pixels)
 
     for (let i = 0; i < pixels; i++) {
@@ -73,11 +73,12 @@ const toFloatTensorInput = async (sourceCanvas, inputSize, ort) => {
     }
 
     return {
-        tensor: new ort.Tensor('float32', input, [1, 3, inputSize, inputSize]),
+        tensor: new ort.Tensor('float32', input, [1, 3, inputHeight, inputWidth]),
         meta: {
             srcW,
             srcH,
-            inputSize,
+            inputWidth,
+            inputHeight,
             scale,
             padX,
             padY
@@ -88,13 +89,13 @@ const toFloatTensorInput = async (sourceCanvas, inputSize, ort) => {
 const isLikelyNormalized = (v) => v >= 0 && v <= 1.5
 
 const convertToSourceBox = (cx, cy, w, h, meta) => {
-    const { inputSize, scale, padX, padY, srcW, srcH } = meta
+    const { inputWidth, inputHeight, scale, padX, padY, srcW, srcH } = meta
 
     const norm = isLikelyNormalized(cx) && isLikelyNormalized(cy) && isLikelyNormalized(w) && isLikelyNormalized(h)
-    const xCenter = norm ? cx * inputSize : cx
-    const yCenter = norm ? cy * inputSize : cy
-    const width = norm ? w * inputSize : w
-    const height = norm ? h * inputSize : h
+    const xCenter = norm ? cx * inputWidth : cx
+    const yCenter = norm ? cy * inputHeight : cy
+    const width = norm ? w * inputWidth : w
+    const height = norm ? h * inputHeight : h
 
     const x1Input = xCenter - width / 2
     const y1Input = yCenter - height / 2
@@ -222,6 +223,30 @@ const parseOutputTensor = (outputTensor, meta, options) => {
     return runNms(rawDetections, iouThreshold, maxDetections)
 }
 
+const toPositiveInt = (value) => {
+    if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
+        return Math.round(value)
+    }
+    if (typeof value === 'string' && /^\d+$/.test(value)) {
+        const parsed = Number(value)
+        if (parsed > 0) return parsed
+    }
+    return null
+}
+
+const resolveModelInputShape = (session, inputName, fallbackSize) => {
+    const dims = session?.inputMetadata?.[inputName]?.dimensions || []
+
+    // 預設 NCHW: [N,3,H,W]
+    const maybeHeight = toPositiveInt(dims[2])
+    const maybeWidth = toPositiveInt(dims[3])
+
+    return {
+        inputWidth: maybeWidth || fallbackSize,
+        inputHeight: maybeHeight || fallbackSize
+    }
+}
+
 export const createOnnxYoloDetector = ({
     modelUrl,
     modelType = 'yolov8',
@@ -270,10 +295,11 @@ export const createOnnxYoloDetector = ({
             const session = await ensureSession()
             const ort = await import('onnxruntime-web')
 
-            const { tensor, meta } = await toFloatTensorInput(sourceCanvas, inputSize, ort)
             const inputName = session.inputNames[0]
             const outputName = session.outputNames[0]
+            const { inputWidth, inputHeight } = resolveModelInputShape(session, inputName, inputSize)
 
+            const { tensor, meta } = await toFloatTensorInput(sourceCanvas, inputWidth, inputHeight, ort)
             const outputs = await session.run({ [inputName]: tensor })
             const outputTensor = outputs[outputName]
 
