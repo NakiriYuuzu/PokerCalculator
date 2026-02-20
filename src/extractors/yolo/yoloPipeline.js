@@ -53,12 +53,14 @@ export class YoloCardPipeline {
             try {
                 const classified = await this.classifyCard(cardImage)
                 results.push({
+                    detectionId: det.id ?? null,
                     bbox: det.bbox,
                     detectionConfidence: det.confidence,
                     ...classified
                 })
             } catch {
                 results.push({
+                    detectionId: det.id ?? null,
                     bbox: det.bbox,
                     detectionConfidence: det.confidence,
                     card: null,

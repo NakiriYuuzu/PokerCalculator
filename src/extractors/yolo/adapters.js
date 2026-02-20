@@ -1,6 +1,7 @@
+import { createOnnxYoloDetector } from './onnxDetector'
+
 /**
- * YOLO adapters scaffolding
- * 實際模型會在 Phase-2 接入（ONNX / WebGPU）。
+ * YOLO adapters
  */
 
 export const createMockDetector = () => ({
@@ -19,3 +20,18 @@ export const createMockClassifier = () => ({
         }
     }
 })
+
+/**
+ * 手動框選 fallback：把使用者框出的區塊轉成 detector 輸出
+ */
+export const createManualDetector = (boxes = []) => ({
+    async detect() {
+        return boxes.map((bbox, index) => ({
+            id: `manual-${index + 1}`,
+            bbox,
+            confidence: 0.99
+        }))
+    }
+})
+
+export const createOnnxDetector = (options) => createOnnxYoloDetector(options)
