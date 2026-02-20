@@ -114,6 +114,10 @@ const CardBatchExtractor = ({ cardOptions, onImportCards, remainingSlots }) => {
 
     const canImport = detectedItems.some(item => !!item.card)
     const cardValueSet = useMemo(() => new Set(cardOptions), [cardOptions])
+    const classNamesVersion = useMemo(() => {
+        const keys = Object.keys(classNamesMap)
+        return `${keys.length}:${keys[0] || ''}`
+    }, [classNamesMap])
 
     useEffect(() => {
         realtimeFpsRef.current = Math.max(1, realtimeFps)
@@ -174,6 +178,8 @@ const CardBatchExtractor = ({ cardOptions, onImportCards, remainingSlots }) => {
                 setClassNamesMap(json || {})
             } catch {
                 setClassNamesMap({})
+            } finally {
+                detectorCacheRef.current = { key: null, pipeline: null }
             }
         }
 
@@ -288,7 +294,8 @@ const CardBatchExtractor = ({ cardOptions, onImportCards, remainingSlots }) => {
             preferWebGPU,
             confidenceThreshold,
             yoloInputSize,
-            maxDetections
+            maxDetections,
+            classNamesVersion
         ].join('|')
 
         if (detectorCacheRef.current.key === cacheKey && detectorCacheRef.current.pipeline) {
@@ -315,7 +322,7 @@ const CardBatchExtractor = ({ cardOptions, onImportCards, remainingSlots }) => {
         }
 
         return pipeline
-    }, [classNamesMap, preferWebGPU, yoloConfidence, yoloInputSize, yoloModelUrl])
+    }, [classNamesMap, classNamesVersion, preferWebGPU, yoloConfidence, yoloInputSize, yoloModelUrl])
 
     const draw = () => {
         const canvas = canvasRef.current
@@ -742,6 +749,9 @@ const CardBatchExtractor = ({ cardOptions, onImportCards, remainingSlots }) => {
                     預設路徑
                 </button>
                 <span className="text-xs text-gray-600">{yoloModelLabel}</span>
+                <span className={`text-xs ${Object.keys(classNamesMap).length > 0 ? 'text-emerald-700' : 'text-amber-700'}`}>
+                    labels: {Object.keys(classNamesMap).length > 0 ? `已載入 ${Object.keys(classNamesMap).length} 類` : '未載入（將無法自動帶入）'}
+                </span>
             </div>
 
             <div className="flex flex-wrap items-center gap-3 mb-1 text-sm">
