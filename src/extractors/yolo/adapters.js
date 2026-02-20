@@ -1,6 +1,7 @@
+import { createOnnxYoloDetector } from './onnxDetector'
+
 /**
- * YOLO adapters scaffolding
- * 實際模型會在後續接入（ONNX / WebGPU）。
+ * YOLO adapters
  */
 
 export const createMockDetector = () => ({
@@ -32,3 +33,5 @@ export const createManualDetector = (boxes = []) => ({
         }))
     }
 })
+
+export const createOnnxDetector = (options) => createOnnxYoloDetector(options)
