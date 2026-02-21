@@ -280,6 +280,68 @@ const parseExpectedInputShapeFromOrtError = (error) => {
     }
 }
 
+const hasClassNames = (value) => {
+    if (!value) return false
+    if (Array.isArray(value)) return value.length > 0
+    if (typeof value === 'object') return Object.keys(value).length > 0
+    return false
+}
+
+const parseNamesMetadataString = (raw) => {
+    if (typeof raw !== 'string' || !raw.trim()) return null
+
+    try {
+        const parsed = JSON.parse(raw)
+        if (hasClassNames(parsed)) return parsed
+    } catch {
+        // ignore
+    }
+
+    const byRegex = {}
+    const matches = raw.matchAll(/(\d+)\s*:\s*['"]([^'"]+)['"]/g)
+    for (const m of matches) {
+        byRegex[m[1]] = m[2]
+    }
+
+    return hasClassNames(byRegex) ? byRegex : null
+}
+
+const resolveClassNamesFromSession = (session) => {
+    const candidates = [
+        session?.metadata?.customMetadataMap,
+        session?.metadata?.customMetadata,
+        session?.metadata,
+        session?.modelMetadata,
+        session?.customMetadataMap
+    ]
+
+    for (const candidate of candidates) {
+        if (!candidate) continue
+
+        let rawNames = null
+
+        if (candidate instanceof Map) {
+            rawNames = candidate.get('names')
+        } else if (typeof candidate.get === 'function') {
+            rawNames = candidate.get('names')
+        } else if (typeof candidate === 'object') {
+            rawNames = candidate.names
+        }
+
+        if (!rawNames) continue
+
+        if (Array.isArray(rawNames) || (typeof rawNames === 'object' && rawNames !== null)) {
+            if (hasClassNames(rawNames)) return rawNames
+            continue
+        }
+
+        const parsed = parseNamesMetadataString(String(rawNames))
+        if (parsed) return parsed
+    }
+
+    return null
+}
+
 export const createOnnxYoloDetector = ({
     modelUrl,
     modelType = 'yolov8',
@@ -296,6 +358,7 @@ export const createOnnxYoloDetector = ({
 
     let sessionPromise = null
     let forcedInputShape = null
+    let runtimeClassNames = null
 
     const ensureSession = async () => {
         if (sessionPromise) return sessionPromise
@@ -324,14 +387,18 @@ export const createOnnxYoloDetector = ({
     }
 
     const getClassNameById = (classId) => {
-        if (!classNames) return null
+        const source = hasClassNames(classNames)
+            ? classNames
+            : runtimeClassNames
 
-        if (Array.isArray(classNames)) {
-            return classNames[classId] ?? null
+        if (!hasClassNames(source)) return null
+
+        if (Array.isArray(source)) {
+            return source[classId] ?? null
         }
 
-        if (typeof classNames === 'object') {
-            return classNames[classId] ?? classNames[String(classId)] ?? null
+        if (typeof source === 'object') {
+            return source[classId] ?? source[String(classId)] ?? null
         }
 
         return null
@@ -343,6 +410,10 @@ export const createOnnxYoloDetector = ({
 
             const session = await ensureSession()
             const ort = await import('onnxruntime-web')
+
+            if (!hasClassNames(runtimeClassNames)) {
+                runtimeClassNames = resolveClassNamesFromSession(session)
+            }
 
             const inputName = session.inputNames[0]
             const outputName = session.outputNames[0]
